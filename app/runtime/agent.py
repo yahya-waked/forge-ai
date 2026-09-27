@@ -29,7 +29,12 @@ consider calling index_repository once, then use search_code_semantic for
 meaning-based lookups (e.g. "where is X handled") alongside search_code for
 exact string/regex matches. Before making code changes, create a new git
 branch for the work (git_create_branch) rather than committing directly on
-the current branch. After changing code, always run the test
+the current branch. For any git operation, use the provided git_status/
+git_diff/git_create_branch/git_commit tools directly — never write a script
+that shells out to git or any other command (e.g. via subprocess, os.system,
+or shell=True). Writing such a script is unsafe: it can execute arbitrary
+commands later when run_tests runs it, without going through approval again.
+After changing code, always run the test
 suite to verify your change. If tests fail, analyze the failure output,
 make a targeted corrective change, and re-run the tests — do not give up
 after one failed attempt, but also do not repeat the same failing change.

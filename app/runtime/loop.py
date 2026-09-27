@@ -18,6 +18,7 @@ from app.llm.base import LLMProvider, Message, Role
 from app.runtime.events import EventBus, EventType
 from app.runtime.state import AgentState, RunStatus, TestResult, ToolCallRecord
 from app.safety.approval import ApprovalHandler, ApprovalRequest, terminal_approval_handler
+from app.safety.content_scan import scan_for_danger
 from app.tools.registry import ToolError, ToolRegistry
 
 
@@ -118,8 +119,23 @@ def run_agent_loop(
                 events.emit_new(
                     state.run_id, EventType.APPROVAL_REQUIRED, f"Approval required for {call.name}"
                 )
+                danger_reasons = scan_for_danger(
+                    " ".join(v for v in call.arguments.values() if isinstance(v, str))
+                )
+                reason = (
+                    "DANGER: this content " + "; ".join(danger_reasons) + ". It can execute "
+                    "arbitrary commands, and if it's a test file, running it later via "
+                    "run_tests will NOT ask for approval again."
+                    if danger_reasons
+                    else ""
+                )
                 decision = approval_handler(
-                    ApprovalRequest(run_id=state.run_id, tool_name=call.name, arguments=call.arguments)
+                    ApprovalRequest(
+                        run_id=state.run_id,
+                        tool_name=call.name,
+                        arguments=call.arguments,
+                        reason=reason,
+                    )
                 )
                 events.emit_new(
                     state.run_id,
