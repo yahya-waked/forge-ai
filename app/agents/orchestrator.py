@@ -65,11 +65,13 @@ class Orchestrator:
         events: EventBus | None = None,
         approval_handler: ApprovalHandler = terminal_approval_handler,
         max_review_rounds: int = 2,
+        allow_dirty: bool = False,
     ) -> None:
         self.llm = llm or get_llm_provider()
         self.events = events or EventBus()
         self.approval_handler = approval_handler
         self.max_review_rounds = max_review_rounds
+        self.allow_dirty = allow_dirty
         self._agent_kwargs = {"events": self.events, "approval_handler": approval_handler}
 
     # ------------------------------------------------------------------ helpers
@@ -123,6 +125,20 @@ class Orchestrator:
 
     def run(self, task: str, repository: str) -> OrchestratorResult:
         result = OrchestratorResult(status="running", summary="")
+
+        # 0) Clean-baseline check. git_commit stages everything, so if the working
+        # tree already has uncommitted work, the agent's commit would silently
+        # swallow it — and the reviewers couldn't tell agent changes from yours.
+        if not self.allow_dirty:
+            if self._tool("git_diff", repo_root=repository).strip() != NO_CHANGES_MARKER:
+                return self._fail(
+                    result,
+                    "dirty_worktree",
+                    "The repository has uncommitted changes that predate this task, and the "
+                    "agent's commit would include them. Commit them first, or stash them with "
+                    "`git stash -u`, then run again (or pass allow_dirty=True to override).\n\n"
+                    + self._tool("git_status", repo_root=repository),
+                )
 
         # 1) Repository Agent: understand the codebase (read-only).
         repo_state = self._stage(

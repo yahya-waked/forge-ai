@@ -14,9 +14,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from google import genai
 from google.genai import types
@@ -142,6 +139,10 @@ class GeminiProvider(LLMProvider):
             tools=gemini_tools,
             temperature=temperature,
             max_output_tokens=max_tokens,
+            # The SDK must never run tools on its own: every tool call has to go
+            # through our loop (permissions, approval, tracing). This also
+            # silences the SDK's "direct use of AFC" warning.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         response = self._call_api(contents=contents, config=config)

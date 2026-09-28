@@ -38,7 +38,8 @@ def terminal_approval_handler(request: ApprovalRequest) -> ApprovalDecision:
     print(f"   Tool:      {request.tool_name}")
     print(f"   Arguments: {request.arguments}")
     if request.reason:
-        print(f"   🚨 {request.reason}")
+        icon = "🚨" if request.reason.startswith("DANGER") else "ℹ️ "
+        print(f"   {icon} {request.reason}")
     answer = input("   Approve this action? [y/N]: ").strip().lower()
     return ApprovalDecision(approved=answer == "y")
 
