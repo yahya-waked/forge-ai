@@ -10,3 +10,8 @@ requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+# Only files named test_*.py are tests. Manual scripts (e.g. tests/manual_*.py)
+# call real LLMs and must never be collected/executed by pytest.
+python_files = ["test_*.py"]

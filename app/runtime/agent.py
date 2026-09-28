@@ -15,6 +15,7 @@ from app.llm.factory import get_llm_provider
 from app.runtime.events import EventBus, EventType
 from app.runtime.loop import run_agent_loop
 from app.runtime.state import AgentState, RunStatus
+from app.safety.approval import ApprovalHandler, terminal_approval_handler
 from app.tools.registry import ToolRegistry
 from app.tools.registry import registry as default_registry
 
@@ -51,11 +52,13 @@ class Agent:
         tools: ToolRegistry | None = None,
         events: EventBus | None = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        approval_handler: ApprovalHandler = terminal_approval_handler,
     ) -> None:
         self.llm = llm or get_llm_provider()
         self.tools = tools or default_registry
         self.events = events or EventBus()
         self.system_prompt = system_prompt
+        self.approval_handler = approval_handler
 
     def run(self, task: str, repository: str) -> AgentState:
         state = AgentState(task=task, repository=repository)
@@ -68,4 +71,4 @@ class Agent:
 
         self.events.emit_new(state.run_id, EventType.TASK_RECEIVED, f"Task received: {task}")
 
-        return run_agent_loop(state, self.llm, self.tools, self.events)
+        return run_agent_loop(state, self.llm, self.tools, self.events, self.approval_handler)

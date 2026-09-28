@@ -86,6 +86,16 @@ class ToolRegistry:
         """Schemas for tools at or below max_risk — what gets handed to the LLM."""
         return [t.to_schema() for t in self._tools.values() if t.risk <= max_risk]
 
+    def subset(self, names: list[str]) -> "ToolRegistry":
+        """A new registry exposing only the named tools — the mechanism behind
+        Least Privilege for specialized agents (section 25 of the spec):
+        a Repository Agent gets a registry with no write_file in it at all,
+        not just an LLM told not to use one."""
+        new_registry = ToolRegistry()
+        for name in names:
+            new_registry.add(self.get(name))
+        return new_registry
+
     def execute(self, name: str, arguments: dict[str, Any]) -> Any:
         tool = self.get(name)
         try:

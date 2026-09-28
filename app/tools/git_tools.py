@@ -9,9 +9,14 @@ agent can do so far.
 
 from __future__ import annotations
 
+import difflib
+import os
+
 from git import GitCommandError, InvalidGitRepositoryError, Repo
 
 from app.tools.registry import RiskLevel, ToolError, registry
+
+_MAX_UNTRACKED_BYTES = 100_000
 
 
 def _get_repo(repo_root: str) -> Repo:
@@ -19,6 +24,44 @@ def _get_repo(repo_root: str) -> Repo:
         return Repo(repo_root)
     except InvalidGitRepositoryError as exc:
         raise ToolError(f"'{repo_root}' is not a git repository (run 'git init' first)") from exc
+
+
+def collect_working_diff(repo: Repo, path: str | None = None) -> str:
+    """Everything that would go into a commit, as one diff: changes to tracked
+    files (vs HEAD) PLUS brand-new untracked files shown as full additions.
+    Plain `git diff` silently omits new files, which would blind the Review
+    and Security agents to exactly the files an agent just created."""
+    norm_path = path.replace("\\", "/") if path else None
+    parts: list[str] = []
+
+    if repo.head.is_valid():
+        tracked = repo.git.diff("HEAD", "--", norm_path) if norm_path else repo.git.diff("HEAD")
+    else:
+        tracked = repo.git.diff("--", norm_path) if norm_path else repo.git.diff()
+    if tracked:
+        parts.append(tracked)
+
+    for rel in repo.untracked_files:
+        if norm_path and rel != norm_path:
+            continue
+        full = os.path.join(repo.working_tree_dir, rel)
+        try:
+            if os.path.getsize(full) > _MAX_UNTRACKED_BYTES:
+                parts.append(f"[new file {rel}: too large to display]")
+                continue
+            with open(full, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (UnicodeDecodeError, OSError):
+            parts.append(f"[new file {rel}: binary or unreadable]")
+            continue
+        added = "".join(
+            difflib.unified_diff(
+                [], content.splitlines(keepends=True), fromfile="/dev/null", tofile=f"b/{rel}"
+            )
+        )
+        parts.append(added or f"[new empty file {rel}]")
+
+    return "\n".join(parts)
 
 
 @registry.register(
@@ -73,8 +116,7 @@ def git_status(repo_root: str) -> str:
 )
 def git_diff(repo_root: str, path: str | None = None) -> str:
     repo = _get_repo(repo_root)
-    diff = repo.git.diff(path) if path else repo.git.diff()
-    return diff or "No uncommitted changes."
+    return collect_working_diff(repo, path) or "No uncommitted changes."
 
 
 @registry.register(
