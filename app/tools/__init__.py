@@ -6,6 +6,7 @@ from app.tools import (  # noqa: F401,E402
     code_search,
     filesystem,
     git_tools,
+    github_tools,
     security_scan,
     testing,
 )

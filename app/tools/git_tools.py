@@ -12,7 +12,7 @@ from __future__ import annotations
 import difflib
 import os
 
-from git import GitCommandError, InvalidGitRepositoryError, Repo
+from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from app.tools.registry import RiskLevel, ToolError, registry
 
@@ -24,6 +24,8 @@ def _get_repo(repo_root: str) -> Repo:
         return Repo(repo_root)
     except InvalidGitRepositoryError as exc:
         raise ToolError(f"'{repo_root}' is not a git repository (run 'git init' first)") from exc
+    except NoSuchPathError as exc:
+        raise ToolError(f"'{repo_root}' does not exist on disk") from exc
 
 
 def collect_working_diff(repo: Repo, path: str | None = None) -> str:

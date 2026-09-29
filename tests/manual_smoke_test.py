@@ -8,7 +8,7 @@ from app.runtime.agent import Agent
 agent = Agent()
 
 result = agent.run(
-    task="Check git status, create a new branch called 'forgeai/test-run-2', then commit all current changes with an appropriate message.",
+    task="Run the test suite and report the results.",
     repository=".",
 )
 

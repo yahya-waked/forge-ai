@@ -17,6 +17,7 @@ performed by the Orchestrator itself — no agent can commit on its own.
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 
@@ -25,6 +26,7 @@ from app.agents.coding_agent import build_coding_agent
 from app.agents.repository_agent import build_repository_agent
 from app.agents.review_agent import build_review_agent
 from app.agents.security_agent import build_security_agent
+from app.github.client import GitHubError, resolve_owner_repo
 from app.llm.base import LLMProvider, Message, Role
 from app.llm.factory import get_llm_provider
 from app.runtime.events import EventBus, EventType
@@ -46,6 +48,7 @@ class OrchestratorResult:
     review: str = ""
     security: str = ""
     commit: str | None = None
+    pr_url: str | None = None
     rounds: int = 0
     runs: list[tuple[str, AgentState]] = field(default_factory=list)
 
@@ -66,12 +69,14 @@ class Orchestrator:
         approval_handler: ApprovalHandler = terminal_approval_handler,
         max_review_rounds: int = 2,
         allow_dirty: bool = False,
+        publish_pr: bool = True,
     ) -> None:
         self.llm = llm or get_llm_provider()
         self.events = events or EventBus()
         self.approval_handler = approval_handler
         self.max_review_rounds = max_review_rounds
         self.allow_dirty = allow_dirty
+        self.publish_pr = publish_pr
         self._agent_kwargs = {"events": self.events, "approval_handler": approval_handler}
 
     # ------------------------------------------------------------------ helpers
@@ -268,4 +273,73 @@ class Orchestrator:
 
         result.status = "committed"
         result.summary = f"{result.commit}\n\nWhat changed:\n{result.coding_summary}"
+
+        if self.publish_pr:
+            result.summary += f"\n\n{self._publish_pr(repository, task, result)}"
+
         return result
+
+    def _publish_pr(self, repository: str, task: str, result: OrchestratorResult) -> str:
+        """Pushes the branch and opens a PR. Any missing prerequisite (no GitHub
+        remote, no token) is reported as a skip, not a failure — a successful
+        local commit should never be undone or hidden by this being optional."""
+        try:
+            owner, name = resolve_owner_repo(repository)
+        except GitHubError as exc:
+            return f"(GitHub publishing skipped: {exc})"
+        if not os.environ.get("GITHUB_TOKEN"):
+            return "(GitHub publishing skipped: GITHUB_TOKEN is not set)"
+
+        run_id = str(uuid.uuid4())
+        status_text = self._tool("git_status", repo_root=repository)
+
+        self.events.emit_new(run_id, EventType.APPROVAL_REQUIRED, "Approval required for git_push")
+        push_decision = self.approval_handler(
+            ApprovalRequest(
+                run_id=run_id,
+                tool_name="git_push",
+                arguments={"repo_root": repository},
+                reason=f"Pushing to {owner}/{name}.\n   {status_text.replace(chr(10), chr(10) + '   ')}",
+            )
+        )
+        if not push_decision.approved:
+            return "(Push rejected by the human reviewer; commit stays local.)"
+
+        try:
+            push_result = self._tool("git_push", repo_root=repository)
+        except ToolError as exc:
+            return f"(Push failed: {exc})"
+
+        pr_title = (result.commit or task)[:72]
+        if pr_title.lower().startswith("committed "):
+            pr_title = pr_title.split(": ", 1)[-1]
+        pr_body = (
+            f"## Task\n{task}\n\n## Changes\n{result.coding_summary}\n\n"
+            f"## Review\n{result.review}\n\n## Security\n{result.security}\n\n"
+            "---\n*Opened by ForgeAI after automated review and security checks, "
+            "and human approval.*"
+        )
+
+        self.events.emit_new(
+            run_id, EventType.APPROVAL_REQUIRED, "Approval required for create_pull_request"
+        )
+        pr_decision = self.approval_handler(
+            ApprovalRequest(
+                run_id=run_id,
+                tool_name="create_pull_request",
+                arguments={"repo_root": repository, "title": pr_title, "body": pr_body},
+                reason=f"Target: {owner}/{name}",
+            )
+        )
+        if not pr_decision.approved:
+            return f"{push_result}\n(PR creation rejected by the human reviewer.)"
+
+        try:
+            pr_result = self._tool(
+                "create_pull_request", repo_root=repository, title=pr_title, body=pr_body
+            )
+        except ToolError as exc:
+            return f"{push_result}\n(PR creation failed: {exc})"
+
+        result.pr_url = pr_result.rsplit(": ", 1)[-1]
+        return f"{push_result}\n{pr_result}"

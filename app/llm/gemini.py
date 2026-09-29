@@ -153,7 +153,10 @@ class GeminiProvider(LLMProvider):
         tool_calls: list[ToolCall] = []
 
         for part in candidate_parts:
-            if getattr(part, "text", None):
+            if getattr(part, "text", None) and not getattr(part, "thought", False):
+                # part.thought=True is Gemini's internal reasoning summary, not the
+                # answer — including it here would leak the model's scratch thinking
+                # into what the agent (and the person watching it) treats as its reply.
                 text_parts.append(part.text)
             fc = getattr(part, "function_call", None)
             if fc:

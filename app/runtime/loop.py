@@ -172,6 +172,12 @@ def run_agent_loop(
                 record.error = str(exc)
                 observation = f"ERROR: bad arguments for '{call.name}': {exc}"
                 state.errors.append(observation)
+            except Exception as exc:  # noqa: BLE001 — a buggy/unexpected tool failure
+                # must become feedback for the agent, never crash the whole run.
+                record.error = str(exc)
+                observation = f"ERROR: unexpected failure in '{call.name}': {exc}"
+                state.errors.append(observation)
+                events.emit_new(state.run_id, EventType.TOOL_CALL_FAILED, observation)
 
             state.record_tool_call(record)
             state.add_observation(observation)

@@ -10,9 +10,11 @@ interpretation, no injection via extra_args).
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 
+from app.safety.sandbox import SandboxError, run_in_sandbox
 from app.tools.registry import RiskLevel, ToolError, registry
 
 # Command name -> the fixed argv it expands to. The agent may add extra
@@ -26,6 +28,26 @@ _ALLOWED_COMMANDS: dict[str, list[str]] = {
 
 _DEFAULT_TIMEOUT_SECONDS = 120
 _MAX_OUTPUT_CHARS = 8000
+_SANDBOX_ENV_VAR = "FORGEAI_SANDBOX"  # set to "off" to run on the host instead (not recommended)
+
+
+def _run_on_host(argv: list[str], repo_root: str, timeout: int) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            shell=False,
+        )
+    except FileNotFoundError as exc:
+        raise ToolError(f"'{argv[0]}' is not installed or not on PATH in this environment") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(f"'{argv[0]}' timed out after {timeout}s") from exc
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
 def _run_allowlisted(repo_root: str, command: str, extra_args: str, timeout: int) -> str:
@@ -38,29 +60,25 @@ def _run_allowlisted(repo_root: str, command: str, extra_args: str, timeout: int
     if extra_args:
         argv.extend(shlex.split(extra_args))
 
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            shell=False,
-        )
-    except FileNotFoundError as exc:
-        raise ToolError(
-            f"'{argv[0]}' is not installed or not on PATH in this environment"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise ToolError(f"'{command}' timed out after {timeout}s") from exc
+    if os.environ.get(_SANDBOX_ENV_VAR, "on").lower() == "off":
+        returncode, output = _run_on_host(argv, repo_root, timeout)
+    else:
+        try:
+            returncode, output = run_in_sandbox(argv, repo_root, timeout)
+        except SandboxError as exc:
+            raise ToolError(
+                f"Sandboxed execution unavailable: {exc}\n"
+                f"Set {_SANDBOX_ENV_VAR}=off to run on the host instead (not recommended — "
+                "this removes the isolation that protects against a test file running "
+                "arbitrary commands)."
+            ) from exc
 
-    status = "PASSED" if result.returncode == 0 else "FAILED"
-    output = (result.stdout or "") + (result.stderr or "")
+    status = "PASSED" if returncode == 0 else "FAILED"
     if len(output) > _MAX_OUTPUT_CHARS:
         cut = len(output) - _MAX_OUTPUT_CHARS
         output = output[:_MAX_OUTPUT_CHARS] + f"\n... [truncated, {cut} more chars]"
 
-    return f"{status} (exit code {result.returncode})\n{output}"
+    return f"{status} (exit code {returncode})\n{output}"
 
 
 @registry.register(
