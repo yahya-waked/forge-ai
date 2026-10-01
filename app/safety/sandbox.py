@@ -56,11 +56,15 @@ def ensure_image_built() -> None:
     if check.returncode == 0:
         return  # already built
 
-    build = subprocess.run(
-        ["docker", "build", "-t", _IMAGE_NAME, _DOCKER_DIR],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        build = subprocess.run(
+            ["docker", "build", "-t", _IMAGE_NAME, _DOCKER_DIR],
+            capture_output=True,
+            text=True,
+            timeout=600,  # first build pulls a base image; 10 minutes is generous, not infinite
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SandboxError("Building the sandbox image timed out after 10 minutes") from exc
     if build.returncode != 0:
         raise SandboxError(f"Failed to build the sandbox image:\n{build.stdout}\n{build.stderr}")
 
