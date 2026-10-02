@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ForgeAI Dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --border: #2a3138; --text: #e6edf3;
+    --muted: #8b949e; --accent: #4f8cff; --green: #3fb950; --red: #f85149;
+    --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh; display: flex;
+  }
+  aside {
+    width: 320px; border-right: 1px solid var(--border); padding: 16px;
+    display: flex; flex-direction: column; gap: 12px; overflow-y: auto;
+  }
+  main { flex: 1; padding: 20px 28px; overflow-y: auto; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; }
+  textarea, input {
+    width: 100%; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer; font-weight: 600;
+  }
+  button.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  button.reject { background: var(--red); }
+  button:disabled { opacity: .5; cursor: default; }
+  .run-item {
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    border: 1px solid transparent; color: var(--muted);
+  }
+  .run-item:hover { background: var(--panel); }
+  .run-item.active { border-color: var(--accent); background: #14203a; color: var(--text); }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 100px; font-size: 11px;
+    font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  }
+  .badge.running, .badge.starting { background: #14203a; color: var(--accent); }
+  .badge.awaiting_approval { background: #3a2f10; color: var(--yellow); }
+  .badge.done, .badge.committed { background: #10301a; color: var(--green); }
+  .badge.error, .badge.commit_rejected, .badge.changes_not_approved, .badge.dirty_worktree,
+  .badge.stage_failed { background: #3a1414; color: var(--red); }
+  #trace { display: flex; flex-direction: column; gap: 4px; margin-bottom: 24px; }
+  .event {
+    font-size: 12.5px; padding: 6px 10px; border-radius: 6px; background: var(--panel);
+    border-left: 3px solid var(--border); display: flex; gap: 10px;
+  }
+  .event .t { color: var(--muted); flex-shrink: 0; }
+  .event.tool_call_started, .event.tool_call_finished { border-left-color: var(--accent); }
+  .event.tool_call_failed { border-left-color: var(--red); }
+  .event.approval_required { border-left-color: var(--yellow); }
+  .event.run_finished { border-left-color: var(--green); }
+  #approval {
+    background: #241d0a; border: 1px solid var(--yellow); border-radius: 8px;
+    padding: 16px; margin-bottom: 20px; position: sticky; top: 0; z-index: 10;
+    box-shadow: 0 8px 20px rgba(0,0,0,.4);
+  }
+  #approval h3 { margin: 0 0 8px; color: var(--yellow); font-size: 14px; }
+  .diff { background: #0a0d12; border-radius: 6px; padding: 10px; font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px; white-space: pre-wrap; overflow-x: auto; max-height: 260px; overflow-y: auto; }
+  .diff .old { color: var(--red); }
+  .diff .new { color: var(--green); }
+  .reason { font-size: 12.5px; color: var(--muted); margin: 8px 0; white-space: pre-wrap; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  #result { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  #result pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; margin: 6px 0 14px; }
+  #result h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 14px 0 4px; }
+  a { color: var(--accent); }
+  .empty { color: var(--muted); font-size: 13px; margin-top: 40px; text-align: center; }
+</style>
+</head>
+<body>
+
+<aside>
+  <div>
+    <h1>ForgeAI</h1>
+    <div style="color: var(--muted); font-size: 12px;">Autonomous Software Engineering Agent</div>
+  </div>
+
+  <div>
+    <h2>New Task</h2>
+    <textarea id="task" placeholder="Describe the task, e.g. 'Fix the bug in ...'"></textarea>
+    <div style="height:8px"></div>
+    <input id="repository" value="." placeholder="Repository path" />
+    <div style="height:8px"></div>
+    <button id="startBtn" style="width:100%">Run</button>
+  </div>
+
+  <div style="flex:1; overflow-y:auto;">
+    <h2>Runs</h2>
+    <div id="runList"></div>
+  </div>
+</aside>
+
+<main>
+  <div id="content"><div class="empty">Start a task, or select a run from the sidebar.</div></div>
+</main>
+
+<script>
+const API = "";
+let currentRunId = null;
+let knownEventCount = 0;
+let pollTimer = null;
+
+async function api(path, opts) {
+  const res = await fetch(API + path, opts);
+  if (!res.ok) {
+    const err = new Error(await res.text());
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+document.getElementById("startBtn").onclick = async () => {
+  const task = document.getElementById("task").value.trim();
+  const repository = document.getElementById("repository").value.trim() || ".";
+  if (!task) return;
+  const { run_id } = await api("/api/runs", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ task, repository }),
+  });
+  document.getElementById("task").value = "";
+  selectRun(run_id);
+  refreshRunList();
+};
+
+function selectRun(runId) {
+  currentRunId = runId;
+  knownEventCount = 0;
+  document.getElementById("content").innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+      <span id="statusBadge" class="badge">...</span>
+      <span id="taskText" style="color:var(--muted); font-size:13px;"></span>
+    </div>
+    <div id="approval"></div>
+    <div id="result"></div>
+    <h2>Live Trace</h2>
+    <div id="trace"></div>
+  `;
+  document.getElementById("approval").style.display = "none";
+  poll();
+  refreshRunList();
+}
+
+async function refreshRunList() {
+  const runs = await api("/api/runs");
+  const list = document.getElementById("runList");
+  list.innerHTML = runs.map(r => `
+    <div class="run-item ${r.run_id === currentRunId ? 'active' : ''}" onclick="selectRun('${r.run_id}')">
+      <div>${escapeHtml(r.task).slice(0, 60)}</div>
+      <span class="badge ${r.status}">${r.status}</span>
+    </div>
+  `).join("");
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderApproval(pending) {
+  const box = document.getElementById("approval");
+  if (!pending) { box.style.display = "none"; return; }
+  box.style.display = "block";
+
+  let diffHtml = "";
+  const a = pending.arguments || {};
+  if (a.old_text !== undefined || a.new_text !== undefined) {
+    diffHtml = `<div class="diff"><span class="old">- ${escapeHtml(a.old_text || "")}</span>\n<span class="new">+ ${escapeHtml(a.new_text || "")}</span></div>`;
+  } else if (a.content !== undefined) {
+    diffHtml = `<div class="diff"><span class="new">${escapeHtml(a.content)}</span></div>`;
+  } else {
+    diffHtml = `<div class="diff">${escapeHtml(JSON.stringify(a, null, 2))}</div>`;
+  }
+
+  box.innerHTML = `
+    <h3>⚠️ Approval required — ${escapeHtml(pending.tool_name)}</h3>
+    ${a.path ? `<div class="reason">File: <b>${escapeHtml(a.path)}</b></div>` : ""}
+    ${pending.reason ? `<div class="reason">${pending.reason.startsWith("DANGER") ? "🚨 " : "ℹ️ "}${escapeHtml(pending.reason)}</div>` : ""}
+    ${diffHtml}
+    <div class="actions">
+      <button onclick="decide(true)">Approve</button>
+      <button class="reject" onclick="decide(false)">Reject</button>
+    </div>
+  `;
+}
+
+async function decide(approved) {
+  await api(`/api/runs/${currentRunId}/approve`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ approved }),
+  });
+}
+
+function renderResult(result, error) {
+  const box = document.getElementById("result");
+  if (error) {
+    box.innerHTML = `<h3>Error</h3><pre style="color:var(--red)">${escapeHtml(error)}</pre>`;
+    return;
+  }
+  if (!result) { box.innerHTML = ""; return; }
+  box.innerHTML = `
+    ${result.pr_url ? `<h3>Pull Request</h3><pre><a href="${result.pr_url}" target="_blank">${result.pr_url}</a></pre>` : ""}
+    <h3>Summary</h3><pre>${escapeHtml(result.summary || "")}</pre>
+    <h3>Review</h3><pre>${escapeHtml(result.review || "")}</pre>
+    <h3>Security</h3><pre>${escapeHtml(result.security || "")}</pre>
+  `;
+}
+
+function renderTrace(events) {
+  const trace = document.getElementById("trace");
+  for (const e of events) {
+    const div = document.createElement("div");
+    div.className = "event " + e.type;
+    const time = new Date(e.at).toLocaleTimeString();
+    div.innerHTML = `<span class="t">${time}</span><span>${escapeHtml(e.message)}</span>`;
+    trace.appendChild(div);
+  }
+  trace.scrollTop = trace.scrollHeight;
+}
+
+async function poll() {
+  clearTimeout(pollTimer);
+  if (!currentRunId) return;
+  try {
+    const status = await api(`/api/runs/${currentRunId}`);
+    document.getElementById("statusBadge").textContent = status.status;
+    document.getElementById("statusBadge").className = "badge " + status.status;
+    document.getElementById("taskText").textContent = status.task;
+    renderApproval(status.pending_approval);
+    renderResult(status.result, status.error);
+
+    const events = await api(`/api/runs/${currentRunId}/events?since=${knownEventCount}`);
+    if (events.length) { renderTrace(events); knownEventCount += events.length; }
+
+    if (status.status === "done" || status.status === "error") { refreshRunList(); return; }
+  } catch (e) {
+    if (e.status === 404) {
+      document.getElementById("content").innerHTML =
+        '<div class="empty">This run no longer exists — the server likely restarted. Start a new task.</div>';
+      currentRunId = null;
+      refreshRunList();
+      return; // stop polling a run that's permanently gone
+    }
+    console.error(e);
+  }
+  pollTimer = setTimeout(poll, 800);
+}
+
+refreshRunList();
+</script>
+</body>
+</html>
