@@ -7,10 +7,9 @@ from app.agents.orchestrator import Orchestrator  # noqa: E402
 
 orchestrator = Orchestrator()
 result = orchestrator.run(
-       task=(
-        "Add a divide(a, b) function to buggy_math.py that raises ValueError "
-        "when b is zero, and matching tests in test_buggy_math.py, including "
-        "a test for the zero case. Make sure all tests pass."
+           task=(
+        "Add a subtract(a, b) function to buggy_math.py that returns a - b, "
+        "with a matching test in test_buggy_math.py. Make sure all tests pass."
         ),
     repository=".",
 )
