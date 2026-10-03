@@ -1,6 +1,6 @@
 import pytest
 
-from buggy_math import add, divide, multiply, subtract
+from buggy_math import add, divide, multiply, square, subtract
 
 
 def test_add():
@@ -25,4 +25,11 @@ def test_divide():
     assert divide(-6, 3) == -2.0
     with pytest.raises(ValueError):
         divide(5, 0)
+
+
+def test_square():
+    assert square(4) == 16
+    assert square(-4) == 16
+    assert square(0) == 0
+
 
